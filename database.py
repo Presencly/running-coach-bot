@@ -118,14 +118,25 @@ def save_strava_tokens(access_token, refresh_token, expires_at):
 
 
 def get_strava_tokens():
-    """Retrieve current Strava tokens."""
+    """Retrieve current Strava tokens, falling back to environment variables."""
     with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute("SELECT access_token, refresh_token, expires_at FROM strava_tokens WHERE id = 1")
         row = cursor.fetchone()
         if row:
             return dict(row)
-        return None
+
+    # Bootstrap from env vars (used for initial Railway deployment)
+    import os
+    access_token = os.getenv('STRAVA_ACCESS_TOKEN')
+    refresh_token = os.getenv('STRAVA_REFRESH_TOKEN')
+    expires_at = os.getenv('STRAVA_EXPIRES_AT')
+    if access_token and refresh_token and expires_at:
+        tokens = {'access_token': access_token, 'refresh_token': refresh_token, 'expires_at': int(expires_at)}
+        save_strava_tokens(access_token, refresh_token, int(expires_at))
+        return tokens
+
+    return None
 
 
 # Activities CRUD
