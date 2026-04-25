@@ -31,7 +31,7 @@ class AiCoach:
     def _get_context_data(self):
         """Build current context about athlete's training."""
         # Recent activities
-        recent_activities = get_recent_activities(limit=5)
+        recent_activities = get_recent_activities(limit=20)
         activities_text = "\n".join([
             f"- {a['name']}: {a['distance_metres']/1000:.1f}km at {a['average_pace_per_km']:.2f}/km pace" +
             (f" (HR: {a['average_heartrate']:.0f} avg, {a['max_heartrate']:.0f} max)" if a['average_heartrate'] else "")
