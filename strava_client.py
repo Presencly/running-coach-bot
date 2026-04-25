@@ -110,6 +110,7 @@ def _parse_activity(activity_json):
             'strava_id': activity_json['id'],
             'name': activity_json.get('name'),
             'start_date': start_date_str,
+            'start_date_local': activity_json.get('start_date_local'),
             'distance_metres': distance_metres,
             'moving_time_seconds': moving_time_seconds,
             'elapsed_time_seconds': activity_json.get('elapsed_time', 0),
@@ -117,6 +118,7 @@ def _parse_activity(activity_json):
             'average_heartrate': activity_json.get('average_heartrate'),
             'max_heartrate': activity_json.get('max_heartrate'),
             'total_elevation_gain': activity_json.get('total_elevation_gain', 0),
+            'kilojoules': activity_json.get('kilojoules'),
             'suffer_score': activity_json.get('suffer_score'),
             'splits_json': splits_json,
             'raw_json': json.dumps(activity_json)

@@ -23,6 +23,16 @@ def init_db():
     """Initialize database with all required tables."""
     with get_db() as conn:
         cursor = conn.cursor()
+
+        # Migrate existing activities table if needed
+        try:
+            cursor.execute("ALTER TABLE activities ADD COLUMN start_date_local TIMESTAMP")
+        except Exception:
+            pass
+        try:
+            cursor.execute("ALTER TABLE activities ADD COLUMN kilojoules REAL")
+        except Exception:
+            pass
         
         # Strava OAuth tokens
         cursor.execute("""
@@ -41,6 +51,7 @@ def init_db():
                 strava_id INTEGER PRIMARY KEY,
                 name TEXT,
                 start_date TIMESTAMP,
+                start_date_local TIMESTAMP,
                 distance_metres REAL,
                 moving_time_seconds INTEGER,
                 elapsed_time_seconds INTEGER,
@@ -48,6 +59,7 @@ def init_db():
                 average_heartrate REAL,
                 max_heartrate REAL,
                 total_elevation_gain REAL,
+                kilojoules REAL,
                 suffer_score INTEGER,
                 splits_json TEXT,
                 raw_json TEXT,
@@ -145,14 +157,15 @@ def save_activity(activity_data):
         cursor = conn.cursor()
         cursor.execute("""
             INSERT OR REPLACE INTO activities
-            (strava_id, name, start_date, distance_metres, moving_time_seconds,
+            (strava_id, name, start_date, start_date_local, distance_metres, moving_time_seconds,
              elapsed_time_seconds, average_pace_per_km, average_heartrate, max_heartrate,
-             total_elevation_gain, suffer_score, splits_json, raw_json)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             total_elevation_gain, kilojoules, suffer_score, splits_json, raw_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             activity_data['strava_id'],
             activity_data['name'],
             activity_data['start_date'],
+            activity_data['start_date_local'],
             activity_data['distance_metres'],
             activity_data['moving_time_seconds'],
             activity_data['elapsed_time_seconds'],
@@ -160,6 +173,7 @@ def save_activity(activity_data):
             activity_data['average_heartrate'],
             activity_data['max_heartrate'],
             activity_data['total_elevation_gain'],
+            activity_data['kilojoules'],
             activity_data['suffer_score'],
             activity_data['splits_json'],
             activity_data['raw_json']

@@ -28,69 +28,65 @@ class AiCoach:
         self.client = Anthropic()
         self.system_prompt = SYSTEM_PROMPT
     
-    def _get_context_data(self):
+    def _get_context_data(self, deep=False):
         """Build current context about athlete's training."""
-        # Recent activities
-        recent_activities = get_recent_activities(limit=20)
+        limit = 20 if deep else 5
+        recent_activities = get_recent_activities(limit=limit)
         activities_text = "\n".join([
-            f"- {a['name']}: {a['distance_metres']/1000:.1f}km at {a['average_pace_per_km']:.2f}/km pace" +
-            (f" (HR: {a['average_heartrate']:.0f} avg, {a['max_heartrate']:.0f} max)" if a['average_heartrate'] else "")
+            f"{(a.get('start_date_local') or a['start_date'])[:10]}: {a['distance_metres']/1000:.1f}km @{a['average_pace_per_km']:.2f}/km" +
+            (f" HR{a['average_heartrate']:.0f}" if a['average_heartrate'] else "") +
+            (f" {a['kilojoules']:.0f}kJ" if a.get('kilojoules') else "")
             for a in recent_activities
         ]) if recent_activities else "No recent activities"
-        
-        # Upcoming week
+
+        # Upcoming week from plan
         metadata = get_plan_metadata()
-        current_week = metadata['current_phase'] if metadata else 1
-        try:
-            upcoming_week = get_plan_week(current_week)
-            upcoming_text = "\n".join([
-                f"- {s['session_date']} ({s['session_type']}): {s['description']}"
-                for s in upcoming_week
-            ]) if upcoming_week else "No upcoming sessions"
-        except:
-            upcoming_text = "No upcoming sessions"
-        
-        return f"""
-## Current Training Context
+        upcoming_text = "No upcoming sessions"
+        if metadata:
+            try:
+                from datetime import date
+                today = date.today()
+                race_date = date.fromisoformat(metadata['race_date'])
+                weeks_elapsed = (today - (race_date.replace(year=race_date.year) - __import__('datetime').timedelta(weeks=24))).days // 7 + 1
+                current_week = max(1, min(24, weeks_elapsed))
+                upcoming_week = get_plan_week(current_week)
+                if upcoming_week:
+                    upcoming_text = "\n".join([
+                        f"{s['session_date']} {s['session_type']} {s['target_distance_km'] or ''}km"
+                        for s in upcoming_week
+                    ])
+            except:
+                pass
 
-### Recent Activities (Last 5 runs)
-{activities_text}
+        return f"Recent runs:\n{activities_text}\n\nUpcoming sessions:\n{upcoming_text}"
 
-### Upcoming Week
-{upcoming_text}
-"""
-    
-    def _format_messages(self, user_message, include_context=True):
+    def _format_messages(self, user_message, include_context=True, deep_context=False):
         """Format conversation history for Claude."""
         messages = []
-        
-        # Add conversation history
-        history = get_conversation_history()
-        for msg in history:
-            messages.append({
-                "role": msg['role'],
-                "content": msg['content']
-            })
-        
-        # Add context if requested
+        for msg in get_conversation_history():
+            messages.append({"role": msg['role'], "content": msg['content']})
+
         if include_context:
-            context = self._get_context_data()
+            context = self._get_context_data(deep=deep_context)
             messages.append({
                 "role": "user",
-                "content": f"[COACH CONTEXT]\n{context}\n\n[ATHLETE MESSAGE]\n{user_message}"
+                "content": f"[CONTEXT]\n{context}\n\n[MESSAGE]\n{user_message}"
             })
         else:
-            messages.append({
-                "role": "user",
-                "content": user_message
-            })
-        
+            messages.append({"role": "user", "content": user_message})
+
         return messages
-    
+
     def _needs_context(self, message):
         """Only fetch training context when the message is run/plan related."""
         keywords = ('run', 'ran', 'today', 'week', 'session', 'plan', 'pace', 'km',
                     'progress', 'strava', 'activity', 'distance', 'long', 'easy', 'tempo')
+        return any(k in message.lower() for k in keywords)
+
+    def _needs_deep_context(self, message):
+        """Use more activity history for analysis-heavy queries."""
+        keywords = ('month', 'months', 'history', 'trend', 'last 3', 'last 4', 'overall',
+                    'been doing', 'have i been', 'analyse', 'analyze', 'review', 'summary')
         return any(k in message.lower() for k in keywords)
 
     def _cached_system(self):
@@ -102,11 +98,16 @@ class AiCoach:
         Process a user message and return coaching response.
         Uses claude-haiku for cost efficiency on daily queries.
         """
-        messages = self._format_messages(user_message, include_context=self._needs_context(user_message))
+        needs_ctx = self._needs_context(user_message)
+        messages = self._format_messages(
+            user_message,
+            include_context=needs_ctx,
+            deep_context=self._needs_deep_context(user_message)
+        )
 
         response = self.client.messages.create(
             model=CLAUDE_MODEL_CHAT,
-            max_tokens=1000,
+            max_tokens=800,
             system=self._cached_system(),
             messages=messages
         )
