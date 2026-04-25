@@ -118,15 +118,7 @@ def save_strava_tokens(access_token, refresh_token, expires_at):
 
 
 def get_strava_tokens():
-    """Retrieve current Strava tokens, falling back to environment variables."""
-    with get_db() as conn:
-        cursor = conn.cursor()
-        cursor.execute("SELECT access_token, refresh_token, expires_at FROM strava_tokens WHERE id = 1")
-        row = cursor.fetchone()
-        if row:
-            return dict(row)
-
-    # Bootstrap from env vars (used for initial Railway deployment)
+    """Retrieve current Strava tokens. Env vars take priority to allow Railway resets."""
     import os
     access_token = os.getenv('STRAVA_ACCESS_TOKEN')
     refresh_token = os.getenv('STRAVA_REFRESH_TOKEN')
@@ -135,6 +127,13 @@ def get_strava_tokens():
         tokens = {'access_token': access_token, 'refresh_token': refresh_token, 'expires_at': int(expires_at)}
         save_strava_tokens(access_token, refresh_token, int(expires_at))
         return tokens
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT access_token, refresh_token, expires_at FROM strava_tokens WHERE id = 1")
+        row = cursor.fetchone()
+        if row:
+            return dict(row)
 
     return None
 
