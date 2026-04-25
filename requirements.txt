@@ -2,3 +2,6 @@ python-telegram-bot==21.7
 anthropic>=0.40.0
 requests==2.31.0
 python-dotenv==1.0.0
+aiohttp==3.9.5
+apscheduler==3.10.4
+pytz==2024.1

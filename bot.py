@@ -2,6 +2,7 @@
 Main Telegram bot entry point.
 Handles message routing, user context, and integration with Strava, Hevy, and Claude.
 """
+import asyncio
 import logging
 from datetime import datetime
 from telegram import Update, constants
@@ -12,6 +13,7 @@ from config import (
     DEBUG,
     ATHLETE_PROFILE,
     HEVY_API_KEY,
+    RAILWAY_URL,
 )
 from database import init_db, get_strava_tokens
 from strava_client import fetch_and_cache_recent_activities
@@ -27,6 +29,8 @@ from gym_plan import (
     get_gym_week_summary,
     create_hevy_routines_for_week,
 )
+from scheduler import create_scheduler
+from webhook import start_webhook_server
 
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -277,7 +281,7 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.error(f"Exception while handling an update: {context.error}")
 
 
-def main():
+async def main():
     print("\n🏃 Running + Gym Coach Bot Starting...\n")
 
     init_db()
@@ -313,11 +317,34 @@ def main():
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     application.add_error_handler(error_handler)
 
-    print("✓ Handlers registered\n")
-    print("🚀 Bot is running!\n")
+    print("✓ Handlers registered")
 
-    application.run_polling()
+    async with application:
+        await application.start()
+        await application.updater.start_polling()
+
+        # Scheduler: daily reminders + weekly review
+        scheduler = create_scheduler(application.bot)
+        scheduler.start()
+        print("✓ Scheduler started (daily 7am + Sunday 7pm Melbourne)")
+
+        # Webhook server: Strava auto-sync
+        webhook_runner = await start_webhook_server(application.bot)
+        if RAILWAY_URL:
+            print(f"✓ Webhook server on port, endpoint: {RAILWAY_URL}/webhook/strava")
+        else:
+            print("✓ Webhook server running locally (use ngrok to expose)")
+
+        print("\n🚀 Bot is running!\n")
+
+        try:
+            await asyncio.Event().wait()  # run forever
+        finally:
+            scheduler.shutdown(wait=False)
+            await webhook_runner.cleanup()
+            await application.updater.stop()
+            await application.stop()
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

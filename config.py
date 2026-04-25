@@ -17,6 +17,14 @@ STRAVA_REDIRECT_URI = "http://localhost:8000/auth/callback"
 STRAVA_AUTH_URL = "https://www.strava.com/oauth/authorize"
 STRAVA_TOKEN_URL = "https://www.strava.com/oauth/token"
 STRAVA_API_BASE = "https://www.strava.com/api/v3"
+STRAVA_WEBHOOK_VERIFY_TOKEN = os.getenv("STRAVA_WEBHOOK_VERIFY_TOKEN", "coach_webhook_verify")
+
+# Deployment
+RAILWAY_URL = os.getenv("RAILWAY_URL", "")  # e.g. https://myapp.railway.app
+PORT = int(os.getenv("PORT", 8080))
+
+# Timezone
+MELBOURNE_TZ = "Australia/Melbourne"
 
 # Claude API
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")

@@ -2,10 +2,13 @@
 Strava OAuth and API integration.
 Handles token refresh, activity fetching, and data caching.
 """
+import logging
 import time
 import requests
 import json
 from datetime import datetime
+
+logger = logging.getLogger(__name__)
 from config import (
     STRAVA_CLIENT_ID,
     STRAVA_CLIENT_SECRET,
@@ -207,19 +210,39 @@ def get_activity_detail(activity_id):
         f"{STRAVA_API_BASE}/activities/{activity_id}",
         headers=headers
     )
-    
+
     if response.status_code != 200:
         raise Exception(f"Activity fetch failed: {response.text}")
-    
+
     activity_json = response.json()
-    
+
     # Verify it's a run
     if activity_json.get('type') != 'Run':
         raise Exception("Activity is not a run")
-    
+
     # Check for HR data
     if not activity_json.get('has_heartrate'):
         if DEBUG:
             print(f"Activity {activity_id} has no heart rate data")
-    
+
     return activity_json
+
+
+def fetch_activity_by_id(activity_id):
+    """Fetch and parse a single activity by its Strava ID. Returns None if not a run."""
+    try:
+        headers = get_authenticated_headers()
+        response = requests.get(
+            f"{STRAVA_API_BASE}/activities/{activity_id}",
+            headers=headers
+        )
+        if response.status_code != 200:
+            logger.error(f"Strava fetch activity error: {response.text}")
+            return None
+        data = response.json()
+        if data.get('type') != 'Run':
+            return None
+        return _parse_activity(data)
+    except Exception as e:
+        logger.error(f"Error fetching activity {activity_id}: {e}")
+        return None
