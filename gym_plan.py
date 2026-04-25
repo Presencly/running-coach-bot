@@ -21,51 +21,47 @@ from hevy_client import (
 )
 
 
+def _gym_prompt(start_week, end_week, running_context):
+    return f"""Generate a gym training plan for weeks {start_week}-{end_week} for {ATHLETE_PROFILE['name']}, complementing their half marathon training.
+
+Running schedule (avoid heavy lower body day before quality runs):
+{running_context or 'Easy Tuesday, quality Thursday, long Sunday'}
+
+Phase guide:
+- Weeks 1-8: Full body/upper-lower, 2-3x/week, moderate intensity
+- Weeks 9-16: Push/pull/legs, 3x/week, increasing intensity
+- Weeks 17-22: Maintain frequency, reduce volume
+- Weeks 23-24: Upper body only, 1-2x/week max
+
+Rules: never schedule lower body the day before Thursday runs or Sunday long runs.
+Session types: upper_push, upper_pull, lower, full_body
+Day numbering: 0=Mon 1=Tue 2=Wed 3=Thu 4=Fri 5=Sat 6=Sun
+
+Return ONLY a JSON array for weeks {start_week} to {end_week}:
+[{{"week": {start_week}, "sessions": [{{"day": 0, "type": "upper_push", "description": "Upper Push — bench press focus", "exercises": [{{"name": "Bench Press", "sets": 3, "reps": "8-10"}}]}}]}}]"""
+
+
 def generate_and_store_gym_plan(coach, running_sessions=None):
-    """
-    Generate a 24-week gym plan using Claude, coordinated with the running plan.
-    coach: AiCoach instance
-    running_sessions: optional list of running sessions for cross-training awareness
-    """
+    """Generate a 24-week gym plan in two 12-week batches to avoid token limits."""
     running_context = ""
     if running_sessions:
-        sample = running_sessions[:10]
         running_context = "\n".join([
-            f"Week {s['week_number']} Day {s['day_of_week']}: {s['session_type']} run"
-            for s in sample
+            f"Week {s['week_number']} Day {s['day_of_week']}: {s['session_type']}"
+            for s in running_sessions[:12]
         ])
 
-    plan_prompt = f"""Generate a 24-week gym training plan for {ATHLETE_PROFILE['name']} that complements the running plan for the Nike Melbourne Half Marathon on {ATHLETE_PROFILE['race_date']}.
+    all_sessions = []
+    for start, end in [(1, 12), (13, 24)]:
+        prompt = _gym_prompt(start, end, running_context)
+        plan_data = coach.generate_plan_raw(prompt)
+        batch = _parse_gym_plan(plan_data)
+        all_sessions.extend(batch)
 
-Athlete: Intermediate gym experience, targeting 3 gym sessions/week.
-Running plan sample (avoid scheduling heavy lower body the day before these):
-{running_context or 'Standard 3-run week: easy Tuesday, quality Thursday, long Sunday'}
-
-The plan must:
-1. Follow 4 phases matching the running plan:
-   - Weeks 1-8 (Base): Full body or upper/lower, 2-3x/week, moderate intensity
-   - Weeks 9-16 (Development): Push/pull/legs or upper/lower, 3x/week, increasing intensity
-   - Weeks 17-22 (Race Specific): Maintain frequency, reduce volume, prioritise running
-   - Weeks 23-24 (Taper): 1-2x/week max, upper body only, no heavy lower body
-2. Never schedule heavy lower body (squats, deadlifts) the day before a quality run
-3. Focus on compound movements: squat, deadlift, bench press, overhead press, rows, pull-ups
-4. Include progressive overload — weight/volume increases week to week
-
-Return JSON array:
-[{{"week": 1, "sessions": [{{"day": 0, "type": "upper_push", "description": "string", "exercises": [{{"name": "Bench Press", "sets": 3, "reps": "8-10", "weight_note": "moderate"}}]}}]}}]
-
-Day numbering: 0=Monday, 1=Tuesday, 2=Wednesday, 3=Thursday, 4=Friday, 5=Saturday, 6=Sunday
-Session types: upper_push, upper_pull, lower, full_body, rest, mobility
-Generate all 24 weeks."""
-
-    plan_data = coach.generate_plan_raw(plan_prompt)
-
-    sessions = _parse_gym_plan(plan_data)
-    if not sessions:
+    if not all_sessions:
         raise ValueError("No gym sessions parsed from Claude response")
 
-    save_gym_plan_sessions_bulk(sessions)
-    return sessions
+    save_gym_plan_sessions_bulk(all_sessions)
+    return all_sessions
 
 
 def _parse_gym_plan(plan_data):
