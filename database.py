@@ -112,6 +112,54 @@ def init_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
+
+        # Hevy gym workouts
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS gym_workouts (
+                hevy_id TEXT PRIMARY KEY,
+                title TEXT,
+                start_time TIMESTAMP,
+                end_time TIMESTAMP,
+                duration_seconds INTEGER,
+                exercises_json TEXT,
+                raw_json TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        # Hevy exercise templates (cached)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS exercise_templates (
+                template_id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                muscle_group TEXT,
+                secondary_muscles TEXT,
+                equipment TEXT,
+                cached_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        # Gym training plan sessions
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS gym_plan_sessions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                week_number INTEGER NOT NULL,
+                day_of_week INTEGER NOT NULL,
+                session_date DATE NOT NULL,
+                session_type TEXT NOT NULL,
+                description TEXT NOT NULL,
+                exercises_json TEXT,
+                completed BOOLEAN DEFAULT FALSE,
+                matched_workout_id TEXT,
+                hevy_routine_id TEXT,
+                notes TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (matched_workout_id) REFERENCES gym_workouts(hevy_id)
+            )
+        """)
+
+        conn.commit()
         
         conn.commit()
 
@@ -371,4 +419,116 @@ def clear_conversation_history():
     with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute("DELETE FROM conversations")
+        conn.commit()
+
+
+# Gym Workouts CRUD
+def save_gym_workout(workout_data):
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT OR REPLACE INTO gym_workouts
+            (hevy_id, title, start_time, end_time, duration_seconds, exercises_json, raw_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (
+            workout_data['hevy_id'],
+            workout_data['title'],
+            workout_data['start_time'],
+            workout_data['end_time'],
+            workout_data['duration_seconds'],
+            workout_data['exercises_json'],
+            workout_data['raw_json'],
+        ))
+        conn.commit()
+
+
+def get_recent_gym_workouts(limit=10):
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM gym_workouts ORDER BY start_time DESC LIMIT ?", (limit,))
+        return [dict(r) for r in cursor.fetchall()]
+
+
+def get_most_recent_gym_workout_time():
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT MAX(start_time) as max_time FROM gym_workouts")
+        row = cursor.fetchone()
+        return row['max_time'] if row and row['max_time'] else None
+
+
+# Exercise Templates CRUD
+def save_exercise_templates(templates):
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.executemany("""
+            INSERT OR REPLACE INTO exercise_templates
+            (template_id, name, muscle_group, secondary_muscles, equipment, cached_at)
+            VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        """, [(t['template_id'], t['name'], t['muscle_group'],
+               t['secondary_muscles'], t['equipment']) for t in templates])
+        conn.commit()
+
+
+def get_exercise_templates():
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM exercise_templates ORDER BY name")
+        return [dict(r) for r in cursor.fetchall()]
+
+
+def get_exercise_templates_cached_at():
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT MIN(cached_at) as oldest FROM exercise_templates")
+        row = cursor.fetchone()
+        return row['oldest'] if row else None
+
+
+# Gym Plan Sessions CRUD
+def save_gym_plan_sessions_bulk(sessions):
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.executemany("""
+            INSERT INTO gym_plan_sessions
+            (week_number, day_of_week, session_date, session_type, description, exercises_json)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, [(s['week_number'], s['day_of_week'], s['session_date'],
+               s['session_type'], s['description'], s.get('exercises_json')) for s in sessions])
+        conn.commit()
+
+
+def get_gym_plan_session_by_date(session_date):
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM gym_plan_sessions WHERE session_date = ?", (session_date,))
+        return [dict(r) for r in cursor.fetchall()]
+
+
+def get_gym_plan_week(week_number):
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT * FROM gym_plan_sessions WHERE week_number = ? ORDER BY day_of_week
+        """, (week_number,))
+        return [dict(r) for r in cursor.fetchall()]
+
+
+def mark_gym_session_completed(session_id, workout_id):
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            UPDATE gym_plan_sessions
+            SET completed = TRUE, matched_workout_id = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+        """, (workout_id, session_id))
+        conn.commit()
+
+
+def update_gym_session_routine_id(session_id, routine_id):
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            UPDATE gym_plan_sessions SET hevy_routine_id = ? WHERE id = ?
+        """, (routine_id, session_id))
         conn.commit()
