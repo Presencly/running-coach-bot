@@ -56,14 +56,29 @@ class AiCoach:
             for a in runs
         ]) if runs else "No recent runs"
 
-        # Gym workouts
-        gym_limit = 10 if deep else 3
+        # Gym workouts — include exercise detail so Claude knows actual weights/reps
+        gym_limit = 10 if deep else 5
         workouts = get_recent_gym_workouts(limit=gym_limit)
-        gym_text = "\n".join([
-            f"{(w.get('start_time') or '')[:10]}: {w['title']} "
-            f"({w['duration_seconds']//60 if w.get('duration_seconds') else '?'}min)"
-            for w in workouts
-        ]) if workouts else "No recent gym workouts"
+        gym_lines = []
+        for w in workouts:
+            duration = f"{w['duration_seconds']//60}min" if w.get('duration_seconds') else "?"
+            header = f"{(w.get('start_time') or '')[:10]}: {w['title']} ({duration})"
+            exercises = json.loads(w.get('exercises_json') or '[]')
+            ex_parts = []
+            for ex in exercises[:6]:
+                sets = ex.get('sets', [])
+                if sets:
+                    weights = [s['weight_kg'] for s in sets if s.get('weight_kg')]
+                    reps = [s['reps'] for s in sets if s.get('reps')]
+                    best_1rm = ex.get('best_1rm')
+                    detail = f"{ex['title']}: {len(sets)}×{reps[0] if reps else '?'}reps"
+                    if weights:
+                        detail += f" @{max(weights)}kg"
+                    if best_1rm:
+                        detail += f" (1RM~{best_1rm}kg)"
+                    ex_parts.append(detail)
+            gym_lines.append(header + ("\n  " + "\n  ".join(ex_parts) if ex_parts else ""))
+        gym_text = "\n".join(gym_lines) if gym_lines else "No recent gym workouts"
 
         # Upcoming week plan
         current_week = self._current_week()
