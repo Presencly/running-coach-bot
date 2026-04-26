@@ -45,9 +45,10 @@ async def handle_event(request, bot, on_new_activity):
 
 
 async def on_new_activity(bot, activity_id):
-    """Fetch new activity from Strava, cache it, analyse it, and notify user."""
+    """Fetch new activity from Strava, cache it, match to plan, analyse it, and notify user."""
     try:
         from strava_client import fetch_activity_by_id, save_activity
+        from database import get_plan_session_by_date
         from ai_coach import AiCoach
 
         activity = fetch_activity_by_id(activity_id)
@@ -57,16 +58,34 @@ async def on_new_activity(bot, activity_id):
         save_activity(activity)
         logger.info(f"Cached new activity {activity_id}")
 
-        coach = AiCoach()
-        analysis = coach.analyze_run(activity)
-
         dist = activity['distance_metres'] / 1000
         pace = activity['average_pace_per_km']
         name = activity.get('name', 'Run')
 
+        # Match to planned session
+        activity_date = (activity.get('start_date_local') or activity['start_date'])[:10]
+        planned_sessions = get_plan_session_by_date(activity_date)
+        plan_context = ""
+        if planned_sessions:
+            s = planned_sessions[0]
+            plan_context = f"\nPlanned session: {s['session_type']} — {s['description']}"
+            if s.get('target_distance_km'):
+                diff = dist - s['target_distance_km']
+                sign = "+" if diff >= 0 else ""
+                plan_context += f"\nTarget: {s['target_distance_km']:.1f}km | Actual: {dist:.1f}km ({sign}{diff:.1f}km)"
+            if s.get('target_pace_min_per_km'):
+                diff = pace - s['target_pace_min_per_km']
+                sign = "+" if diff >= 0 else ""
+                plan_context += f"\nTarget pace: {s['target_pace_min_per_km']:.2f}/km | Actual: {pace:.2f}/km ({sign}{diff:.2f})"
+        else:
+            plan_context = "\nNo session was planned for today (unscheduled run)."
+
+        coach = AiCoach()
+        analysis = coach.analyze_run(activity, plan_context=plan_context)
+
         msg = (
             f"🏃 <b>New run synced: {name}</b>\n"
-            f"{dist:.1f}km @ {pace:.2f}/km\n\n"
+            f"{dist:.1f}km @ {pace:.2f}/km\n"
             f"{analysis}"
         )
         await bot.send_message(chat_id=TELEGRAM_USER_ID, text=msg, parse_mode="HTML")

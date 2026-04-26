@@ -235,15 +235,18 @@ Generate all 24 weeks.
 
     # ── Analysis ─────────────────────────────────────────────────────────────
 
-    def analyze_run(self, activity):
+    def analyze_run(self, activity, plan_context=""):
+        hr_line = ""
+        if activity.get('average_heartrate') and activity.get('max_heartrate'):
+            hr_line = f"\nHR: avg {activity['average_heartrate']:.0f} / max {activity['max_heartrate']:.0f} bpm"
+
         prompt = f"""Analyze this completed run and provide coaching feedback:
 
 Distance: {activity['distance_metres']/1000:.1f}km | Pace: {activity['average_pace_per_km']:.2f}/km
-Time: {activity['moving_time_seconds']/60:.0f}min | Date: {(activity.get('start_date_local') or activity['start_date'])[:10]}
-HR: avg {activity['average_heartrate']:.0f} / max {activity['max_heartrate']:.0f} bpm
-Elevation: {activity['total_elevation_gain']:.0f}m{f" | {activity['kilojoules']:.0f}kJ" if activity.get('kilojoules') else ""}
+Time: {activity['moving_time_seconds']/60:.0f}min | Date: {(activity.get('start_date_local') or activity['start_date'])[:10]}{hr_line}
+Elevation: {activity['total_elevation_gain']:.0f}m{f" | {activity['kilojoules']:.0f}kJ" if activity.get('kilojoules') else ""}{plan_context}
 
-Keep feedback conversational. Flag if easy run HR was too high."""
+Keep feedback conversational and under 120 words. If plan context is provided, explicitly say whether they hit the target. Flag if easy run HR was too high."""
 
         response = self.client.messages.create(
             model=CLAUDE_MODEL_CHAT,

@@ -7,8 +7,12 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 import pytz
 
-from config import TELEGRAM_USER_ID, MELBOURNE_TZ
-from database import get_plan_metadata, get_plan_week, get_gym_plan_week, get_recent_activities
+import json
+from config import TELEGRAM_USER_ID, MELBOURNE_TZ, HEVY_API_KEY
+from database import (
+    get_plan_metadata, get_plan_week, get_gym_plan_week, get_recent_activities,
+    get_exercise_pb, upsert_exercise_pb,
+)
 from training_plan import get_today_session
 from gym_plan import get_today_gym_session
 
@@ -142,6 +146,53 @@ Start with "📊 Week {week_num} wrap-up:" and end with "See you Monday 💪" ""
         logger.error(f"Error sending weekly review: {e}")
 
 
+async def sync_hevy_and_check_pbs(bot):
+    """Fetch new Hevy workouts and notify if any exercise PBs were broken."""
+    if not HEVY_API_KEY:
+        return
+    try:
+        from hevy_client import fetch_and_cache_recent_workouts
+        new_workouts = fetch_and_cache_recent_workouts()
+        if not new_workouts:
+            return
+
+        logger.info(f"Hevy auto-sync: {len(new_workouts)} new workouts")
+        pbs_hit = []
+
+        for workout in new_workouts:
+            workout_date = (workout.get('start_time') or '')[:10]
+            exercises = json.loads(workout.get('exercises_json') or '[]')
+            for ex in exercises:
+                template_id = ex.get('template_id')
+                if not template_id:
+                    continue
+                current_1rm = ex.get('best_1rm', 0)
+                if current_1rm <= 0:
+                    continue
+                is_new_pb = upsert_exercise_pb(
+                    template_id, ex['title'], current_1rm, workout_date
+                )
+                if is_new_pb:
+                    old_pb = get_exercise_pb(template_id)
+                    pbs_hit.append((ex['title'], current_1rm, old_pb))
+
+        if pbs_hit:
+            lines = ["🏆 <b>New personal bests!</b>\n"]
+            for name, new_1rm, old_1rm in pbs_hit:
+                if old_1rm and old_1rm < new_1rm:
+                    lines.append(f"• {name}: {new_1rm:.1f}kg 1RM (was {old_1rm:.1f}kg ↑{new_1rm - old_1rm:.1f}kg)")
+                else:
+                    lines.append(f"• {name}: {new_1rm:.1f}kg 1RM (first recorded)")
+            await bot.send_message(
+                chat_id=TELEGRAM_USER_ID,
+                text="\n".join(lines),
+                parse_mode="HTML"
+            )
+
+    except Exception as e:
+        logger.error(f"Error in Hevy auto-sync: {e}")
+
+
 def create_scheduler(bot):
     """Create and return a configured AsyncIOScheduler."""
     scheduler = AsyncIOScheduler(timezone=melb_tz)
@@ -161,6 +212,15 @@ def create_scheduler(bot):
         trigger=CronTrigger(day_of_week="sun", hour=19, minute=0, timezone=melb_tz),
         args=[bot],
         id="weekly_review",
+        replace_existing=True,
+    )
+
+    # Hevy auto-sync every 4 hours
+    scheduler.add_job(
+        sync_hevy_and_check_pbs,
+        trigger=CronTrigger(hour="*/4", minute=0, timezone=melb_tz),
+        args=[bot],
+        id="hevy_sync",
         replace_existing=True,
     )
 

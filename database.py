@@ -139,6 +139,17 @@ def init_db():
             )
         """)
 
+        # Exercise personal bests (1RM per exercise)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS exercise_pbs (
+                template_id TEXT PRIMARY KEY,
+                exercise_name TEXT NOT NULL,
+                best_1rm REAL NOT NULL,
+                achieved_date DATE NOT NULL,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
         # Gym training plan sessions
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS gym_plan_sessions (
@@ -532,3 +543,38 @@ def update_gym_session_routine_id(session_id, routine_id):
             UPDATE gym_plan_sessions SET hevy_routine_id = ? WHERE id = ?
         """, (routine_id, session_id))
         conn.commit()
+
+
+# Exercise PBs CRUD
+def get_exercise_pb(template_id):
+    """Return the stored best 1RM for an exercise, or 0 if none."""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT best_1rm FROM exercise_pbs WHERE template_id = ?", (template_id,))
+        row = cursor.fetchone()
+        return row['best_1rm'] if row else 0
+
+
+def upsert_exercise_pb(template_id, exercise_name, best_1rm, achieved_date):
+    """Insert or update a PB only if the new value beats the stored one. Returns True if new PB."""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT best_1rm FROM exercise_pbs WHERE template_id = ?", (template_id,))
+        row = cursor.fetchone()
+        if row is None or best_1rm > row['best_1rm']:
+            cursor.execute("""
+                INSERT OR REPLACE INTO exercise_pbs
+                (template_id, exercise_name, best_1rm, achieved_date, updated_at)
+                VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+            """, (template_id, exercise_name, best_1rm, achieved_date))
+            conn.commit()
+            return True
+        return False
+
+
+def get_all_exercise_pbs():
+    """Return all stored exercise PBs ordered by exercise name."""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM exercise_pbs ORDER BY exercise_name")
+        return [dict(r) for r in cursor.fetchall()]
