@@ -56,28 +56,37 @@ class AiCoach:
             for a in runs
         ]) if runs else "No recent runs"
 
-        # Gym workouts — include exercise detail so Claude knows actual weights/reps
-        gym_limit = 10 if deep else 5
+        # Gym workouts — full detail for deep queries, compact summary for normal
+        gym_limit = 8 if deep else 3
         workouts = get_recent_gym_workouts(limit=gym_limit)
         gym_lines = []
         for w in workouts:
             duration = f"{w['duration_seconds']//60}min" if w.get('duration_seconds') else "?"
             header = f"{(w.get('start_time') or '')[:10]}: {w['title']} ({duration})"
             exercises = json.loads(w.get('exercises_json') or '[]')
-            ex_parts = []
-            for ex in exercises[:6]:
-                sets = ex.get('sets', [])
-                if sets:
-                    weights = [s['weight_kg'] for s in sets if s.get('weight_kg')]
-                    reps = [s['reps'] for s in sets if s.get('reps')]
-                    best_1rm = ex.get('best_1rm')
-                    detail = f"{ex['title']}: {len(sets)}×{reps[0] if reps else '?'}reps"
-                    if weights:
-                        detail += f" @{max(weights)}kg"
-                    if best_1rm:
-                        detail += f" (1RM~{best_1rm}kg)"
-                    ex_parts.append(detail)
-            gym_lines.append(header + ("\n  " + "\n  ".join(ex_parts) if ex_parts else ""))
+            if deep:
+                ex_parts = []
+                for ex in exercises[:6]:
+                    sets = ex.get('sets', [])
+                    if sets:
+                        weights = [s['weight_kg'] for s in sets if s.get('weight_kg')]
+                        reps = [s['reps'] for s in sets if s.get('reps')]
+                        best_1rm = ex.get('best_1rm')
+                        detail = f"{ex['title']}: {len(sets)}×{reps[0] if reps else '?'}reps"
+                        if weights:
+                            detail += f" @{max(weights)}kg"
+                        if best_1rm:
+                            detail += f" (1RM~{best_1rm}kg)"
+                        ex_parts.append(detail)
+                gym_lines.append(header + ("\n  " + "\n  ".join(ex_parts) if ex_parts else ""))
+            else:
+                # Compact: just exercise names + top weight
+                ex_summary = ", ".join(
+                    f"{ex['title']}@{max((s['weight_kg'] for s in ex.get('sets',[]) if s.get('weight_kg')), default=0):.0f}kg"
+                    if any(s.get('weight_kg') for s in ex.get('sets', [])) else ex['title']
+                    for ex in exercises[:4]
+                )
+                gym_lines.append(f"{header} — {ex_summary}" if ex_summary else header)
         gym_text = "\n".join(gym_lines) if gym_lines else "No recent gym workouts"
 
         # Upcoming week plan
@@ -106,7 +115,8 @@ class AiCoach:
 
     def _format_messages(self, user_message, include_context=True, deep_context=False):
         messages = []
-        for msg in get_conversation_history():
+        # Keep only last 6 messages (3 turns) — enough for conversational follow-ups
+        for msg in get_conversation_history(limit=6):
             messages.append({"role": msg['role'], "content": msg['content']})
 
         if include_context:
@@ -133,7 +143,8 @@ class AiCoach:
         keywords = (
             'month', 'months', 'history', 'trend', 'last 3', 'last 4', 'overall',
             'been doing', 'have i been', 'analyse', 'analyze', 'review', 'summary',
-            'progress', 'stronger', 'improving',
+            'progress', 'stronger', 'improving', 'pb', 'personal best', 'max', '1rm',
+            'bench', 'squat', 'deadlift', 'weights', 'lifting',
         )
         return any(k in message.lower() for k in keywords)
 
