@@ -43,53 +43,11 @@ class AiCoach:
         except Exception:
             return 1
 
-    def _get_context_data(self, deep=False):
-        """Build unified running + gym context for Claude."""
-        # Running activities
-        limit = 20 if deep else 5
-        runs = get_recent_activities(limit=limit)
-        runs_text = "\n".join([
-            f"{(a.get('start_date_local') or a['start_date'])[:10]}: "
-            f"{a['distance_metres']/1000:.1f}km @{a['average_pace_per_km']:.2f}/km"
-            + (f" HR{a['average_heartrate']:.0f}" if a['average_heartrate'] else "")
-            + (f" {a['kilojoules']:.0f}kJ" if a.get('kilojoules') else "")
-            for a in runs
-        ]) if runs else "No recent runs"
+    def _get_context_data(self, include_runs=True, include_gym=True, deep=False):
+        """Build context for Claude. Only fetch what the query actually needs."""
+        parts = []
 
-        # Gym workouts — full detail for deep queries, compact summary for normal
-        gym_limit = 8 if deep else 3
-        workouts = get_recent_gym_workouts(limit=gym_limit)
-        gym_lines = []
-        for w in workouts:
-            duration = f"{w['duration_seconds']//60}min" if w.get('duration_seconds') else "?"
-            header = f"{(w.get('start_time') or '')[:10]}: {w['title']} ({duration})"
-            exercises = json.loads(w.get('exercises_json') or '[]')
-            if deep:
-                ex_parts = []
-                for ex in exercises[:6]:
-                    sets = ex.get('sets', [])
-                    if sets:
-                        weights = [s['weight_kg'] for s in sets if s.get('weight_kg')]
-                        reps = [s['reps'] for s in sets if s.get('reps')]
-                        best_1rm = ex.get('best_1rm')
-                        detail = f"{ex['title']}: {len(sets)}×{reps[0] if reps else '?'}reps"
-                        if weights:
-                            detail += f" @{max(weights)}kg"
-                        if best_1rm:
-                            detail += f" (1RM~{best_1rm}kg)"
-                        ex_parts.append(detail)
-                gym_lines.append(header + ("\n  " + "\n  ".join(ex_parts) if ex_parts else ""))
-            else:
-                # Compact: just exercise names + top weight
-                ex_summary = ", ".join(
-                    f"{ex['title']}@{max((s['weight_kg'] for s in ex.get('sets',[]) if s.get('weight_kg')), default=0):.0f}kg"
-                    if any(s.get('weight_kg') for s in ex.get('sets', [])) else ex['title']
-                    for ex in exercises[:4]
-                )
-                gym_lines.append(f"{header} — {ex_summary}" if ex_summary else header)
-        gym_text = "\n".join(gym_lines) if gym_lines else "No recent gym workouts"
-
-        # Upcoming week plan
+        # Week plan always included — gives cross-training awareness regardless of query type
         current_week = self._current_week()
         run_sessions = get_plan_week(current_week)
         gym_sessions = get_gym_plan_week(current_week)
@@ -106,21 +64,63 @@ class AiCoach:
             if s['session_type'] not in ('rest', 'mobility')
         ]) if gym_sessions else "No gym sessions planned"
 
-        return (
-            f"Recent runs:\n{runs_text}\n\n"
-            f"Recent gym workouts:\n{gym_text}\n\n"
-            f"This week's running plan (week {current_week}):\n{run_plan}\n\n"
-            f"This week's gym plan:\n{gym_plan}"
-        )
+        parts.append(f"This week's plan (week {current_week}):\nRun: {run_plan}\nGym: {gym_plan}")
 
-    def _format_messages(self, user_message, include_context=True, deep_context=False):
+        # Run history — only when asked about running
+        if include_runs:
+            limit = 20 if deep else 5
+            runs = get_recent_activities(limit=limit)
+            runs_text = "\n".join([
+                f"{(a.get('start_date_local') or a['start_date'])[:10]}: "
+                f"{a['distance_metres']/1000:.1f}km @{a['average_pace_per_km']:.2f}/km"
+                + (f" HR{a['average_heartrate']:.0f}" if a['average_heartrate'] else "")
+                + (f" {a['kilojoules']:.0f}kJ" if a.get('kilojoules') else "")
+                for a in runs
+            ]) if runs else "No recent runs"
+            parts.append(f"Recent runs:\n{runs_text}")
+
+        # Gym history — only when asked about gym sessions/strength
+        if include_gym:
+            gym_limit = 8 if deep else 3
+            workouts = get_recent_gym_workouts(limit=gym_limit)
+            gym_lines = []
+            for w in workouts:
+                duration = f"{w['duration_seconds']//60}min" if w.get('duration_seconds') else "?"
+                header = f"{(w.get('start_time') or '')[:10]}: {w['title']} ({duration})"
+                exercises = json.loads(w.get('exercises_json') or '[]')
+                if deep:
+                    ex_parts = []
+                    for ex in exercises[:6]:
+                        sets = ex.get('sets', [])
+                        if sets:
+                            weights = [s['weight_kg'] for s in sets if s.get('weight_kg')]
+                            reps = [s['reps'] for s in sets if s.get('reps')]
+                            best_1rm = ex.get('best_1rm')
+                            detail = f"{ex['title']}: {len(sets)}×{reps[0] if reps else '?'}reps"
+                            if weights:
+                                detail += f" @{max(weights)}kg"
+                            if best_1rm:
+                                detail += f" (1RM~{best_1rm}kg)"
+                            ex_parts.append(detail)
+                    gym_lines.append(header + ("\n  " + "\n  ".join(ex_parts) if ex_parts else ""))
+                else:
+                    ex_summary = ", ".join(
+                        f"{ex['title']}@{max((s['weight_kg'] for s in ex.get('sets',[]) if s.get('weight_kg')), default=0):.0f}kg"
+                        if any(s.get('weight_kg') for s in ex.get('sets', [])) else ex['title']
+                        for ex in exercises[:4]
+                    )
+                    gym_lines.append(f"{header} — {ex_summary}" if ex_summary else header)
+            parts.append(f"Recent gym workouts:\n" + ("\n".join(gym_lines) if gym_lines else "No recent gym workouts"))
+
+        return "\n\n".join(parts)
+
+    def _format_messages(self, user_message, include_runs=True, include_gym=True, deep=False):
         messages = []
-        # Keep only last 6 messages (3 turns) — enough for conversational follow-ups
         for msg in get_conversation_history(limit=6):
             messages.append({"role": msg['role'], "content": msg['content']})
 
-        if include_context:
-            context = self._get_context_data(deep=deep_context)
+        if include_runs or include_gym:
+            context = self._get_context_data(include_runs=include_runs, include_gym=include_gym, deep=deep)
             messages.append({
                 "role": "user",
                 "content": f"[CONTEXT]\n{context}\n\n[MESSAGE]\n{user_message}"
@@ -131,15 +131,26 @@ class AiCoach:
         return messages
 
     def _needs_context(self, message):
-        keywords = (
-            'run', 'ran', 'today', 'week', 'session', 'plan', 'pace', 'km',
-            'progress', 'strava', 'activity', 'distance', 'long', 'easy', 'tempo',
-            'gym', 'workout', 'lift', 'bench', 'squat', 'deadlift', 'press',
-            'pull', 'push', 'hevy', 'exercise', 'tired', 'sore', 'recover',
+        """Returns (needs_runs, needs_gym) tuple."""
+        m = message.lower()
+        run_keywords = (
+            'run', 'ran', 'pace', 'km', 'strava', 'activity', 'distance',
+            'long run', 'easy', 'tempo', 'interval', 'heart rate', 'hr',
         )
-        return any(k in message.lower() for k in keywords)
+        gym_keywords = (
+            'gym', 'workout', 'lift', 'bench', 'squat', 'deadlift', 'press',
+            'pull', 'push', 'hevy', 'exercise', 'weight', 'sets', 'reps',
+            'pb', 'personal best', '1rm', 'muscle', 'upper', 'lower',
+        )
+        # Fatigue/recovery questions need both — cross-training awareness
+        both_keywords = ('tired', 'sore', 'recover', 'fatigue', 'rest', 'today', 'week', 'plan', 'session', 'progress')
+        if any(k in m for k in both_keywords):
+            return True, True
+        needs_runs = any(k in m for k in run_keywords)
+        needs_gym = any(k in m for k in gym_keywords)
+        return needs_runs, needs_gym
 
-    def _needs_deep_context(self, message):
+    def _needs_deep(self, message):
         keywords = (
             'month', 'months', 'history', 'trend', 'last 3', 'last 4', 'overall',
             'been doing', 'have i been', 'analyse', 'analyze', 'review', 'summary',
@@ -154,11 +165,12 @@ class AiCoach:
     # ── Chat ─────────────────────────────────────────────────────────────────
 
     def chat(self, user_message):
-        needs_ctx = self._needs_context(user_message)
+        needs_runs, needs_gym = self._needs_context(user_message)
         messages = self._format_messages(
             user_message,
-            include_context=needs_ctx,
-            deep_context=self._needs_deep_context(user_message)
+            include_runs=needs_runs,
+            include_gym=needs_gym,
+            deep=self._needs_deep(user_message),
         )
 
         response = self.client.messages.create(
