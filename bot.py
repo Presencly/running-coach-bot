@@ -89,8 +89,18 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         response = coach.chat(user_message)
         await _reply(update, response)
     except Exception as e:
-        logger.error(f"Error processing message: {e}")
-        await _reply(update, "🤖 Coach is temporarily unavailable. Try again in a moment.")
+        import anthropic
+        error_type = type(e).__name__
+        logger.error(f"Error processing message [{error_type}]: {e}", exc_info=True)
+
+        if isinstance(e, anthropic.RateLimitError):
+            await _reply(update, "⏳ Claude API rate limit hit — wait 30 seconds and try again.")
+        elif isinstance(e, anthropic.APITimeoutError):
+            await _reply(update, "⏱️ Claude took too long to respond — try again.")
+        elif isinstance(e, anthropic.APIStatusError):
+            await _reply(update, f"⚠️ Claude API error ({e.status_code}) — try again in a moment.")
+        else:
+            await _reply(update, f"❌ Error: {error_type} — {str(e)[:120]}")
 
 
 async def fetch_recent(update: Update, context: ContextTypes.DEFAULT_TYPE):

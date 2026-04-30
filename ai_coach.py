@@ -20,9 +20,11 @@ from database import (
     add_conversation_message,
     get_recent_activities,
     get_plan_week,
+    get_plan_session_by_date,
     get_plan_metadata,
     get_recent_gym_workouts,
     get_gym_plan_week,
+    get_gym_plan_session_by_date,
 )
 
 
@@ -68,7 +70,6 @@ class AiCoach:
 
     def _get_context_data(self, include_runs=True, include_gym=True, deep=False):
         """Build context for Claude. Only fetch what the query actually needs."""
-        from database import get_plan_session_by_date, get_gym_plan_session_by_date
         parts = []
         today = date.today().isoformat()
         current_week = self._current_week()
