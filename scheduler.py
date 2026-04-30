@@ -164,9 +164,22 @@ async def sync_hevy_and_check_pbs(bot):
         logger.info(f"Hevy auto-sync: {len(new_workouts)} new workouts")
         pbs_hit = []
 
+        cutoff = datetime.utcnow().replace(tzinfo=None)
+        from datetime import timedelta as td
+        recent_cutoff = cutoff - td(hours=48)
+
         for workout in new_workouts:
             workout_date = (workout.get('start_time') or '')[:10]
             exercises = json.loads(workout.get('exercises_json') or '[]')
+
+            # Only notify/analyse workouts from the last 48 hours
+            try:
+                workout_dt = datetime.fromisoformat(
+                    (workout.get('start_time') or '').replace('Z', '+00:00').replace('+00:00', '')
+                )
+                is_recent = workout_dt >= recent_cutoff
+            except Exception:
+                is_recent = False
 
             # PB detection
             for ex in exercises:
@@ -179,24 +192,25 @@ async def sync_hevy_and_check_pbs(bot):
                 is_new_pb = upsert_exercise_pb(
                     template_id, ex['title'], current_1rm, workout_date
                 )
-                if is_new_pb:
+                if is_new_pb and is_recent:
                     old_pb = get_exercise_pb(template_id)
                     pbs_hit.append((ex['title'], current_1rm, old_pb))
 
-            # Auto-analyse the workout
-            try:
-                from ai_coach import AiCoach
-                coach = AiCoach()
-                analysis = coach.analyze_gym_workout(workout)
-                duration = f"{workout['duration_seconds']//60}min" if workout.get('duration_seconds') else "?"
-                msg = (
-                    f"🏋️ <b>Workout synced: {workout['title']}</b>\n"
-                    f"{duration} · {workout_date}\n\n"
-                    f"{analysis}"
-                )
-                await bot.send_message(chat_id=TELEGRAM_USER_ID, text=msg, parse_mode="HTML")
-            except Exception as e:
-                logger.error(f"Error auto-analysing gym workout: {e}")
+            # Auto-analyse only recent workouts
+            if is_recent:
+                try:
+                    from ai_coach import AiCoach
+                    coach = AiCoach()
+                    analysis = coach.analyze_gym_workout(workout)
+                    duration = f"{workout['duration_seconds']//60}min" if workout.get('duration_seconds') else "?"
+                    msg = (
+                        f"🏋️ <b>Workout synced: {workout['title']}</b>\n"
+                        f"{duration} · {workout_date}\n\n"
+                        f"{analysis}"
+                    )
+                    await bot.send_message(chat_id=TELEGRAM_USER_ID, text=msg, parse_mode="HTML")
+                except Exception as e:
+                    logger.error(f"Error auto-analysing gym workout: {e}")
 
         if pbs_hit:
             lines = ["🏆 <b>New personal bests!</b>\n"]
