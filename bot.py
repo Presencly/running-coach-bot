@@ -287,6 +287,43 @@ async def setup(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await _reply(update, f"Error generating plan: {e}")
 
 
+async def sync(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Force immediate sync of both Strava runs and Hevy workouts."""
+    if not is_authorized(update.effective_user.id):
+        await update.message.reply_text("Unauthorized")
+        return
+
+    try:
+        await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=constants.ChatAction.TYPING)
+        msg = "🔄 Syncing...\n\n"
+
+        # Strava
+        try:
+            runs = fetch_and_cache_recent_activities()
+            if runs:
+                msg += f"🏃 {len(runs)} new run(s) from Strava\n"
+            else:
+                msg += "🏃 Strava: up to date\n"
+        except Exception as e:
+            msg += f"🏃 Strava error: {e}\n"
+
+        # Hevy
+        if HEVY_API_KEY:
+            try:
+                from hevy_client import fetch_and_cache_recent_workouts
+                workouts = fetch_and_cache_recent_workouts()
+                if workouts:
+                    msg += f"🏋️ {len(workouts)} new workout(s) from Hevy\n"
+                else:
+                    msg += "🏋️ Hevy: up to date\n"
+            except Exception as e:
+                msg += f"🏋️ Hevy error: {e}\n"
+
+        await _reply(update, msg)
+    except Exception as e:
+        await _reply(update, f"Sync error: {e}")
+
+
 async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.error(f"Exception while handling an update: {context.error}")
 
@@ -323,6 +360,7 @@ async def main():
     application.add_handler(CommandHandler("progress", progress))
     application.add_handler(CommandHandler("fetch_recent", fetch_recent))
     application.add_handler(CommandHandler("fetch_gym", fetch_gym))
+    application.add_handler(CommandHandler("sync", sync))
     application.add_handler(CommandHandler("setup", setup))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     application.add_error_handler(error_handler)

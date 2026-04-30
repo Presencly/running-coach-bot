@@ -215,10 +215,10 @@ def create_scheduler(bot):
         replace_existing=True,
     )
 
-    # Hevy auto-sync every 4 hours
+    # Hevy auto-sync every hour
     scheduler.add_job(
         sync_hevy_and_check_pbs,
-        trigger=CronTrigger(hour="*/4", minute=0, timezone=melb_tz),
+        trigger=CronTrigger(minute=0, timezone=melb_tz),
         args=[bot],
         id="hevy_sync",
         replace_existing=True,
