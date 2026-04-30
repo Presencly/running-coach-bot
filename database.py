@@ -433,6 +433,18 @@ def clear_conversation_history():
         conn.commit()
 
 
+def prune_conversation_history(keep=50):
+    """Delete all but the most recent N messages."""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            DELETE FROM conversations WHERE id NOT IN (
+                SELECT id FROM conversations ORDER BY id DESC LIMIT ?
+            )
+        """, (keep,))
+        conn.commit()
+
+
 # Gym Workouts CRUD
 def save_gym_workout(workout_data):
     with get_db() as conn:
@@ -486,6 +498,15 @@ def get_exercise_templates():
         cursor = conn.cursor()
         cursor.execute("SELECT * FROM exercise_templates ORDER BY name")
         return [dict(r) for r in cursor.fetchall()]
+
+
+def get_muscle_group_for_template(template_id):
+    """Look up the primary muscle group for an exercise template ID."""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT muscle_group FROM exercise_templates WHERE template_id = ?", (template_id,))
+        row = cursor.fetchone()
+        return row['muscle_group'] if row else ""
 
 
 def get_exercise_templates_cached_at():

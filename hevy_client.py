@@ -178,13 +178,12 @@ def fetch_and_cache_exercise_templates(force=False):
             break
 
         for t in page_templates:
-            muscles = t.get("muscle_group", {})
             templates.append({
                 "template_id": t["id"],
                 "name": t.get("title", ""),
-                "muscle_group": muscles.get("primary", "") if isinstance(muscles, dict) else str(muscles),
-                "secondary_muscles": ",".join(muscles.get("secondary", [])) if isinstance(muscles, dict) else "",
-                "equipment": t.get("equipment_category", ""),
+                "muscle_group": t.get("primary_muscle_group", ""),
+                "secondary_muscles": ",".join(t.get("secondary_muscle_groups", [])),
+                "equipment": t.get("equipment", t.get("equipment_category", "")),
             })
 
         if len(page_templates) < 100:

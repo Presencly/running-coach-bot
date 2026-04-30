@@ -49,26 +49,31 @@ async def send_daily_reminder(bot):
         if run_sessions:
             for s in run_sessions:
                 stype = s['session_type'].replace('_', ' ').title()
-                parts.append(f"🏃 <b>Run:</b> {stype}")
-                if s.get('description'):
-                    parts.append(f"   {s['description']}")
-                if s.get('target_distance_km'):
-                    parts.append(f"   Target: {s['target_distance_km']:.1f}km")
+                if s.get('completed'):
+                    parts.append(f"🏃 <b>Run:</b> {stype} — ✓ already done!")
+                else:
+                    parts.append(f"🏃 <b>Run:</b> {stype}")
+                    if s.get('description'):
+                        parts.append(f"   {s['description']}")
+                    if s.get('target_distance_km'):
+                        parts.append(f"   Target: {s['target_distance_km']:.1f}km")
 
         if gym_sessions:
-            import json
             for s in gym_sessions:
                 stype = s['session_type'].replace('_', ' ').title()
-                parts.append(f"🏋️ <b>Gym:</b> {stype}")
-                if s.get('description'):
-                    parts.append(f"   {s['description']}")
-                if s.get('exercises_json'):
-                    exercises = json.loads(s['exercises_json'])
-                    ex_line = ", ".join(e['name'] for e in exercises[:3])
-                    if ex_line:
-                        parts.append(f"   {ex_line}...")
-                if s.get('hevy_routine_id'):
-                    parts.append("   ✓ Routine ready in Hevy")
+                if s.get('completed'):
+                    parts.append(f"🏋️ <b>Gym:</b> {stype} — ✓ already done!")
+                else:
+                    parts.append(f"🏋️ <b>Gym:</b> {stype}")
+                    if s.get('description'):
+                        parts.append(f"   {s['description']}")
+                    if s.get('exercises_json'):
+                        exercises = json.loads(s['exercises_json'])
+                        ex_line = ", ".join(e['name'] for e in exercises[:3])
+                        if ex_line:
+                            parts.append(f"   {ex_line}...")
+                    if s.get('hevy_routine_id'):
+                        parts.append("   ✓ Routine ready in Hevy")
 
         await bot.send_message(
             chat_id=TELEGRAM_USER_ID,
@@ -162,6 +167,8 @@ async def sync_hevy_and_check_pbs(bot):
         for workout in new_workouts:
             workout_date = (workout.get('start_time') or '')[:10]
             exercises = json.loads(workout.get('exercises_json') or '[]')
+
+            # PB detection
             for ex in exercises:
                 template_id = ex.get('template_id')
                 if not template_id:
@@ -175,6 +182,21 @@ async def sync_hevy_and_check_pbs(bot):
                 if is_new_pb:
                     old_pb = get_exercise_pb(template_id)
                     pbs_hit.append((ex['title'], current_1rm, old_pb))
+
+            # Auto-analyse the workout
+            try:
+                from ai_coach import AiCoach
+                coach = AiCoach()
+                analysis = coach.analyze_gym_workout(workout)
+                duration = f"{workout['duration_seconds']//60}min" if workout.get('duration_seconds') else "?"
+                msg = (
+                    f"🏋️ <b>Workout synced: {workout['title']}</b>\n"
+                    f"{duration} · {workout_date}\n\n"
+                    f"{analysis}"
+                )
+                await bot.send_message(chat_id=TELEGRAM_USER_ID, text=msg, parse_mode="HTML")
+            except Exception as e:
+                logger.error(f"Error auto-analysing gym workout: {e}")
 
         if pbs_hit:
             lines = ["🏆 <b>New personal bests!</b>\n"]

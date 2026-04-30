@@ -18,6 +18,7 @@ from config import (
 from database import (
     get_conversation_history,
     add_conversation_message,
+    prune_conversation_history,
     get_recent_activities,
     get_plan_week,
     get_plan_session_by_date,
@@ -25,6 +26,7 @@ from database import (
     get_recent_gym_workouts,
     get_gym_plan_week,
     get_gym_plan_session_by_date,
+    get_muscle_group_for_template,
 )
 
 
@@ -178,7 +180,11 @@ class AiCoach:
                             weights = [s['weight_kg'] for s in sets if s.get('weight_kg')]
                             reps = [s['reps'] for s in sets if s.get('reps')]
                             best_1rm = ex.get('best_1rm')
-                            detail = f"{ex['title']}: {len(sets)}×{reps[0] if reps else '?'}reps"
+                            muscle = get_muscle_group_for_template(ex.get('template_id', ''))
+                            detail = f"{ex['title']}"
+                            if muscle:
+                                detail += f" [{muscle}]"
+                            detail += f": {len(sets)}×{reps[0] if reps else '?'}reps"
                             if weights:
                                 detail += f" @{max(weights)}kg"
                             if best_1rm:
@@ -265,6 +271,7 @@ class AiCoach:
         assistant_message = response.content[0].text
         add_conversation_message("user", user_message)
         add_conversation_message("assistant", assistant_message)
+        prune_conversation_history(keep=50)
         return assistant_message
 
     # ── Plan generation ───────────────────────────────────────────────────────
@@ -353,28 +360,13 @@ Generate all 24 weeks.
             if not easy_ok:
                 hr_line += f" — ABOVE Z2 (target: 119-139bpm for easy runs)"
 
-        # Include per-km splits if available (compact format)
-        splits_line = ""
-        if activity.get('splits_json'):
-            try:
-                splits = json.loads(activity['splits_json'])
-                split_paces = [
-                    f"km{s.get('split',i+1)}:{s['moving_time']/60:.1f}min"
-                    for i, s in enumerate(splits[:8])
-                    if s.get('moving_time') and s.get('distance', 0) > 500
-                ]
-                if split_paces:
-                    splits_line = f"\nSplits: {' | '.join(split_paces)}"
-            except Exception:
-                pass
-
         prompt = f"""Analyze this completed run and provide coaching feedback:
 
 Distance: {activity['distance_metres']/1000:.1f}km | Pace: {activity['average_pace_per_km']:.2f}/km
-Time: {activity['moving_time_seconds']/60:.0f}min | Date: {(activity.get('start_date_local') or activity['start_date'])[:10]}{hr_line}{splits_line}
+Time: {activity['moving_time_seconds']/60:.0f}min | Date: {(activity.get('start_date_local') or activity['start_date'])[:10]}{hr_line}
 Elevation: {activity['total_elevation_gain']:.0f}m{f" | {activity['kilojoules']:.0f}kJ" if activity.get('kilojoules') else ""}{plan_context}
 
-Keep feedback conversational and under 150 words. Explicitly state the HR zone and whether it was appropriate. If splits show pace drift, call it out. If plan context is provided, say whether targets were hit."""
+Keep feedback conversational and under 150 words. Explicitly state the HR zone and whether it was appropriate. If plan context is provided, say whether targets were hit."""
 
         response = self.client.messages.create(
             model=CLAUDE_MODEL_CHAT,
@@ -415,7 +407,7 @@ Keep it conversational and concise."""
         prompt = f"""The athlete has requested a plan adjustment. Reason: {reason}
 
 Current training context:
-{self._get_context_data()}
+{self._get_context_data(include_runs=True, include_gym=True, deep=False)}
 
 Suggest specific adjustments to the next 7-14 days across both running and gym. Be brief and actionable."""
 
