@@ -45,48 +45,87 @@ class AiCoach:
 
     def _get_context_data(self, include_runs=True, include_gym=True, deep=False):
         """Build context for Claude. Only fetch what the query actually needs."""
+        from database import get_plan_session_by_date, get_gym_plan_session_by_date
         parts = []
-
-        # Week plan always included — gives cross-training awareness regardless of query type
+        today = date.today().isoformat()
         current_week = self._current_week()
+
+        # ── Header: date + today's sessions ──────────────────────────────────
+        today_run = get_plan_session_by_date(today)
+        today_gym = get_gym_plan_session_by_date(today)
+
+        header = f"Today: {today} (week {current_week} of 24)\n"
+        if today_run:
+            s = today_run[0]
+            dist = f" {s['target_distance_km']:.1f}km" if s.get('target_distance_km') else ""
+            done = " ✓ completed" if s.get('completed') else ""
+            header += f"Today's run: {s['session_type']}{dist}{done} — {s['description']}\n"
+        else:
+            header += "Today's run: rest day\n"
+
+        if today_gym:
+            s = today_gym[0]
+            done = " ✓ completed" if s.get('completed') else ""
+            exercises = json.loads(s.get('exercises_json') or '[]')
+            ex_line = ", ".join(e['name'] for e in exercises[:4]) if exercises else ""
+            header += f"Today's gym: {s['session_type'].replace('_', ' ')}{done}"
+            if ex_line:
+                header += f" — {ex_line}"
+        else:
+            header += "Today's gym: rest day"
+        parts.append(header)
+
+        # ── Week plan (compact, with descriptions) ────────────────────────────
         run_sessions = get_plan_week(current_week)
         gym_sessions = get_gym_plan_week(current_week)
 
-        run_plan = "\n".join([
-            f"{s['session_date']} {s['session_type']}"
-            + (f" {s['target_distance_km']}km" if s.get('target_distance_km') else "")
-            for s in run_sessions
-        ]) if run_sessions else "No running sessions planned"
+        run_plan_lines = []
+        for s in run_sessions:
+            marker = "✓" if s.get('completed') else "·"
+            dist = f" {s['target_distance_km']:.1f}km" if s.get('target_distance_km') else ""
+            run_plan_lines.append(f"{marker} {s['session_date']} {s['session_type']}{dist}: {s['description'][:60]}")
 
-        gym_plan = "\n".join([
-            f"{s['session_date']} {s['session_type'].replace('_', ' ')}"
-            for s in gym_sessions
-            if s['session_type'] not in ('rest', 'mobility')
-        ]) if gym_sessions else "No gym sessions planned"
+        gym_plan_lines = []
+        for s in gym_sessions:
+            if s['session_type'] in ('rest', 'mobility'):
+                continue
+            marker = "✓" if s.get('completed') else "·"
+            gym_plan_lines.append(f"{marker} {s['session_date']} {s['session_type'].replace('_', ' ')}: {s['description'][:60]}")
 
-        parts.append(f"This week's plan (week {current_week}):\nRun: {run_plan}\nGym: {gym_plan}")
+        week_block = f"Week {current_week} plan:\n"
+        week_block += "Runs:\n" + "\n".join(run_plan_lines) if run_plan_lines else "Runs: none planned"
+        week_block += "\nGym:\n" + "\n".join(gym_plan_lines) if gym_plan_lines else "\nGym: none planned"
+        parts.append(week_block)
 
-        # Run history — only when asked about running
+        # ── Run history ───────────────────────────────────────────────────────
         if include_runs:
             limit = 20 if deep else 5
             runs = get_recent_activities(limit=limit)
-            runs_text = "\n".join([
-                f"{(a.get('start_date_local') or a['start_date'])[:10]}: "
-                f"{a['distance_metres']/1000:.1f}km @{a['average_pace_per_km']:.2f}/km"
-                + (f" HR{a['average_heartrate']:.0f}" if a['average_heartrate'] else "")
-                + (f" {a['kilojoules']:.0f}kJ" if a.get('kilojoules') else "")
-                for a in runs
-            ]) if runs else "No recent runs"
-            parts.append(f"Recent runs:\n{runs_text}")
+            run_lines = []
+            for a in runs:
+                hr = a.get('average_heartrate')
+                hr_flag = ""
+                if hr:
+                    if hr > 160:
+                        hr_flag = " ⚠ HR very high for easy run"
+                    elif hr > 150:
+                        hr_flag = " ⚠ HR elevated"
+                run_lines.append(
+                    f"{(a.get('start_date_local') or a['start_date'])[:10]}: "
+                    f"{a['distance_metres']/1000:.1f}km @{a['average_pace_per_km']:.2f}/km"
+                    + (f" HR{hr:.0f}{hr_flag}" if hr else "")
+                    + (f" {a['kilojoules']:.0f}kJ" if a.get('kilojoules') else "")
+                )
+            parts.append("Recent runs:\n" + ("\n".join(run_lines) if run_lines else "No recent runs"))
 
-        # Gym history — only when asked about gym sessions/strength
+        # ── Gym history ───────────────────────────────────────────────────────
         if include_gym:
             gym_limit = 8 if deep else 3
             workouts = get_recent_gym_workouts(limit=gym_limit)
             gym_lines = []
             for w in workouts:
                 duration = f"{w['duration_seconds']//60}min" if w.get('duration_seconds') else "?"
-                header = f"{(w.get('start_time') or '')[:10]}: {w['title']} ({duration})"
+                header_w = f"{(w.get('start_time') or '')[:10]}: {w['title']} ({duration})"
                 exercises = json.loads(w.get('exercises_json') or '[]')
                 if deep:
                     ex_parts = []
@@ -102,15 +141,15 @@ class AiCoach:
                             if best_1rm:
                                 detail += f" (1RM~{best_1rm}kg)"
                             ex_parts.append(detail)
-                    gym_lines.append(header + ("\n  " + "\n  ".join(ex_parts) if ex_parts else ""))
+                    gym_lines.append(header_w + ("\n  " + "\n  ".join(ex_parts) if ex_parts else ""))
                 else:
                     ex_summary = ", ".join(
-                        f"{ex['title']}@{max((s['weight_kg'] for s in ex.get('sets',[]) if s.get('weight_kg')), default=0):.0f}kg"
+                        f"{ex['title']}@{max((s['weight_kg'] for s in ex.get('sets', []) if s.get('weight_kg')), default=0):.0f}kg"
                         if any(s.get('weight_kg') for s in ex.get('sets', [])) else ex['title']
                         for ex in exercises[:4]
                     )
-                    gym_lines.append(f"{header} — {ex_summary}" if ex_summary else header)
-            parts.append(f"Recent gym workouts:\n" + ("\n".join(gym_lines) if gym_lines else "No recent gym workouts"))
+                    gym_lines.append(f"{header_w} — {ex_summary}" if ex_summary else header_w)
+            parts.append("Recent gym workouts:\n" + ("\n".join(gym_lines) if gym_lines else "No recent gym workouts"))
 
         return "\n\n".join(parts)
 
