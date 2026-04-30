@@ -56,7 +56,7 @@ ATHLETE_PROFILE = {
         "average_pace_per_km": 6.5
     },
     "location": "Melbourne, Australia",
-    "known_patterns": "Runs easy days too hard — monitor HR",
+    "known_patterns": "Consistently runs easy days in Zone 3 (139-158bpm) instead of Zone 2 (119-139bpm) — always flag this",
     "injury_history": "Previous blister issues (resolved with insoles)"
 }
 
@@ -69,14 +69,14 @@ PHASE_STRUCTURE = {
     "taper": {"weeks": 2, "volume_target": 20}
 }
 
-# HR Zone thresholds (standard 5-zone model)
-# Zones are calculated as % of estimated max HR
+# HR Zones — based on Rohit's confirmed max HR of 198bpm
+ATHLETE_MAX_HR = 198
 HR_ZONES = {
-    1: (0.50, 0.60),      # Recovery: 50-60%
-    2: (0.60, 0.70),      # Endurance: 60-70%
-    3: (0.70, 0.80),      # Tempo: 70-80%
-    4: (0.80, 0.90),      # Threshold: 80-90%
-    5: (0.90, 1.00)       # Max Effort: 90-100%
+    1: (int(198 * 0.50), int(198 * 0.60)),   # Recovery:   99–119bpm
+    2: (int(198 * 0.60), int(198 * 0.70)),   # Endurance: 119–139bpm  ← target for easy runs
+    3: (int(198 * 0.70), int(198 * 0.80)),   # Aerobic:   139–158bpm
+    4: (int(198 * 0.80), int(198 * 0.90)),   # Threshold: 158–178bpm
+    5: (int(198 * 0.90), 198),               # Max:       178–198bpm
 }
 
 # Conversation history
@@ -97,7 +97,9 @@ SYSTEM_PROMPT = """You are an experienced strength and running coach working one
 - Current running base: Less than 10km per week, building up over 24 weeks
 - Recent running benchmark: 15.5km race in March 2026 at 6:30/km average pace
 - Running HR data: Available via Strava (Apple Watch sync)
-- Running tendency: Runs easy days too hard — always flag this when HR or pace data suggests it
+- Max HR: 198bpm (confirmed)
+- HR Zones: Z1 99-119 | Z2 119-139 (easy) | Z3 139-158 (aerobic) | Z4 158-178 (threshold) | Z5 178-198 (max)
+- Running tendency: Consistently runs easy days in Z3 (139-158bpm) instead of Z2 (119-139bpm). ALWAYS flag this — he must slow down or walk to stay in Z2 on easy days
 - Gym frequency: Targeting 3 sessions per week, previously consistent at 2x/week
 - Gym experience: Intermediate — familiar with compound lifts, has training history in Hevy
 - Total weekly training target: 3 runs + 3 gym sessions = 6 sessions/week (ramp up gradually)

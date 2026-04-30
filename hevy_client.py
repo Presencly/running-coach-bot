@@ -57,10 +57,18 @@ def _parse_workout(raw):
                 "rpe": s.get("rpe"),
                 "estimated_1rm": round(estimated_1rm, 1),
             })
+        raw_muscles = ex.get("muscle_group") or ex.get("primary_muscle_group") or {}
+        if isinstance(raw_muscles, dict):
+            muscle_group = raw_muscles.get("primary") or raw_muscles.get("name") or ""
+        elif isinstance(raw_muscles, str):
+            muscle_group = raw_muscles
+        else:
+            muscle_group = ""
+
         exercises.append({
             "template_id": ex.get("exercise_template_id"),
             "title": ex.get("title"),
-            "muscle_group": ex.get("muscle_group"),
+            "muscle_group": muscle_group,
             "sets": sets,
             "best_1rm": round(best_1rm, 1),
         })

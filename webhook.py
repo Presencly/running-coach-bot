@@ -62,12 +62,14 @@ async def on_new_activity(bot, activity_id):
         pace = activity['average_pace_per_km']
         name = activity.get('name', 'Run')
 
-        # Match to planned session
+        # Match to planned session and mark it complete
         activity_date = (activity.get('start_date_local') or activity['start_date'])[:10]
         planned_sessions = get_plan_session_by_date(activity_date)
         plan_context = ""
         if planned_sessions:
             s = planned_sessions[0]
+            from database import mark_session_completed
+            mark_session_completed(s['id'], activity['strava_id'])
             plan_context = f"\nPlanned session: {s['session_type']} — {s['description']}"
             if s.get('target_distance_km'):
                 diff = dist - s['target_distance_km']

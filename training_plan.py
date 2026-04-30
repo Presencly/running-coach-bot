@@ -179,32 +179,70 @@ def get_week_summary(week_number):
 
 
 def assess_progress(weeks_back=4):
-    """Assess training progress over the last N weeks."""
-    activities = get_recent_activities(limit=weeks_back * 3)  # Rough estimate
+    """Assess training progress over the last N weeks, broken down by week and session type."""
+    from datetime import date, timedelta
+    from config import HR_ZONES
+
+    activities = get_recent_activities(limit=weeks_back * 7)
     metadata = get_plan_metadata()
-    
+
     if not activities:
         return "No recent activities to assess."
-    
-    total_distance = sum(a['distance_metres'] for a in activities) / 1000
-    avg_pace = sum(a['average_pace_per_km'] for a in activities) / len(activities)
-    
+
     goal_pace = metadata['goal_pace_per_km'] if metadata else ATHLETE_PROFILE['goal_pace_per_km']
-    
-    pace_diff = avg_pace - goal_pace
-    
-    assessment = f"Over the last {weeks_back} weeks:\n"
-    assessment += f"- Total distance: {total_distance:.1f}km\n"
-    assessment += f"- Average pace: {avg_pace:.2f}/km\n"
-    assessment += f"- vs goal pace ({goal_pace:.2f}/km): "
-    
-    if pace_diff < -0.2:
-        assessment += "🔥 Faster than goal (good!)"
-    elif pace_diff < 0.2:
-        assessment += "✓ On pace"
-    elif pace_diff < 0.5:
-        assessment += "⚠ Slightly slower than goal"
-    else:
-        assessment += "❌ Significantly slower than goal"
-    
-    return assessment
+    today = date.today()
+
+    # Group by week
+    weekly = {}
+    for a in activities:
+        act_date = date.fromisoformat((a.get('start_date_local') or a['start_date'])[:10])
+        week_start = act_date - timedelta(days=act_date.weekday())
+        key = week_start.isoformat()
+        weekly.setdefault(key, []).append(a)
+
+    lines = [f"Training progress — last {weeks_back} weeks:\n"]
+
+    for week_start in sorted(weekly.keys(), reverse=True)[:weeks_back]:
+        week_acts = weekly[week_start]
+        week_km = sum(a['distance_metres'] for a in week_acts) / 1000
+        week_end = date.fromisoformat(week_start) + timedelta(days=6)
+        label = "This week" if date.fromisoformat(week_start) <= today <= week_end else week_start
+
+        # Separate long runs from easy runs for meaningful pace comparison
+        long_runs = [a for a in week_acts if a['distance_metres'] >= 8000]
+        easy_runs = [a for a in week_acts if a['distance_metres'] < 8000]
+
+        lines.append(f"{label}: {week_km:.1f}km across {len(week_acts)} run(s)")
+
+        if easy_runs:
+            avg_easy_pace = sum(a['average_pace_per_km'] for a in easy_runs) / len(easy_runs)
+            avg_easy_hr = [a['average_heartrate'] for a in easy_runs if a.get('average_heartrate')]
+            hr_str = f" avg HR{sum(avg_easy_hr)/len(avg_easy_hr):.0f}" if avg_easy_hr else ""
+            # Flag if HR is above Z2
+            if avg_easy_hr:
+                mean_hr = sum(avg_easy_hr) / len(avg_easy_hr)
+                z2_max = HR_ZONES[2][1]
+                hr_str += " ✓ Z2" if mean_hr <= z2_max else f" ⚠ Z3+ (target <{z2_max}bpm)"
+            lines.append(f"  Easy runs: {avg_easy_pace:.2f}/km{hr_str}")
+
+        if long_runs:
+            avg_long_pace = sum(a['average_pace_per_km'] for a in long_runs) / len(long_runs)
+            lines.append(f"  Long run: {long_runs[0]['distance_metres']/1000:.1f}km @{avg_long_pace:.2f}/km")
+
+    # Overall trend: compare first vs last two weeks
+    sorted_weeks = sorted(weekly.keys())
+    if len(sorted_weeks) >= 2:
+        early = [a for w in sorted_weeks[:2] for a in weekly[w]]
+        recent = [a for w in sorted_weeks[-2:] for a in weekly[w]]
+        early_pace = sum(a['average_pace_per_km'] for a in early) / len(early)
+        recent_pace = sum(a['average_pace_per_km'] for a in recent) / len(recent)
+        diff = early_pace - recent_pace
+        if diff > 0.1:
+            lines.append(f"\nTrend: improving — {diff:.2f}/km faster than {weeks_back} weeks ago ✓")
+        elif diff < -0.1:
+            lines.append(f"\nTrend: slowing — {abs(diff):.2f}/km slower than {weeks_back} weeks ago")
+        else:
+            lines.append("\nTrend: consistent pace across the period")
+
+    lines.append(f"\nGoal race pace: {goal_pace:.2f}/km")
+    return "\n".join(lines)

@@ -12,6 +12,8 @@ from config import (
     SYSTEM_PROMPT,
     ATHLETE_PROFILE,
     PLAN_WEEKS,
+    HR_ZONES,
+    ATHLETE_MAX_HR,
 )
 from database import (
     get_conversation_history,
@@ -28,6 +30,27 @@ class AiCoach:
     def __init__(self):
         self.client = Anthropic()
         self.system_prompt = SYSTEM_PROMPT
+
+    # ── Helpers ──────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _hr_zone(bpm):
+        """Return (zone_number, label, appropriate_for_easy) for a given HR."""
+        if bpm is None:
+            return None, "", True
+        for zone, (low, high) in HR_ZONES.items():
+            if low <= bpm <= high:
+                labels = {1: "Z1-recovery", 2: "Z2-easy", 3: "Z3-aerobic", 4: "Z4-threshold", 5: "Z5-max"}
+                return zone, labels[zone], zone <= 2
+        return 5, "Z5-max", False
+
+    @staticmethod
+    def _week_date_range():
+        """Return (week_start, week_end) ISO strings for the current Mon–Sun."""
+        today = date.today()
+        week_start = today - timedelta(days=today.weekday())
+        week_end = week_start + timedelta(days=6)
+        return week_start.isoformat(), week_end.isoformat()
 
     # ── Context building ─────────────────────────────────────────────────────
 
@@ -97,6 +120,25 @@ class AiCoach:
         week_block += "\nGym:\n" + "\n".join(gym_plan_lines) if gym_plan_lines else "\nGym: none planned"
         parts.append(week_block)
 
+        # ── Week volume summary ───────────────────────────────────────────────
+        week_start, week_end = self._week_date_range()
+        all_runs = get_recent_activities(limit=20)
+        week_runs = [
+            a for a in all_runs
+            if week_start <= (a.get('start_date_local') or a['start_date'])[:10] <= week_end
+        ]
+        planned_km = sum(
+            s.get('target_distance_km') or 0 for s in get_plan_week(current_week)
+            if s['session_type'] not in ('rest',)
+        )
+        actual_km = sum(a['distance_metres'] / 1000 for a in week_runs)
+        completed_runs = sum(1 for s in get_plan_week(current_week) if s.get('completed'))
+        total_run_sessions = sum(1 for s in get_plan_week(current_week) if s['session_type'] not in ('rest',))
+        parts.append(
+            f"This week's running volume: {actual_km:.1f}km of {planned_km:.1f}km planned "
+            f"({completed_runs}/{total_run_sessions} sessions done)"
+        )
+
         # ── Run history ───────────────────────────────────────────────────────
         if include_runs:
             limit = 20 if deep else 5
@@ -104,16 +146,16 @@ class AiCoach:
             run_lines = []
             for a in runs:
                 hr = a.get('average_heartrate')
-                hr_flag = ""
+                _, zone_label, easy_ok = self._hr_zone(hr)
+                hr_str = ""
                 if hr:
-                    if hr > 160:
-                        hr_flag = " ⚠ HR very high for easy run"
-                    elif hr > 150:
-                        hr_flag = " ⚠ HR elevated"
+                    hr_str = f" HR{hr:.0f}({zone_label})"
+                    if not easy_ok:
+                        hr_str += " ⚠ too hard for easy run"
                 run_lines.append(
                     f"{(a.get('start_date_local') or a['start_date'])[:10]}: "
                     f"{a['distance_metres']/1000:.1f}km @{a['average_pace_per_km']:.2f}/km"
-                    + (f" HR{hr:.0f}{hr_flag}" if hr else "")
+                    + hr_str
                     + (f" {a['kilojoules']:.0f}kJ" if a.get('kilojoules') else "")
                 )
             parts.append("Recent runs:\n" + ("\n".join(run_lines) if run_lines else "No recent runs"))
@@ -298,17 +340,40 @@ Generate all 24 weeks.
     # ── Analysis ─────────────────────────────────────────────────────────────
 
     def analyze_run(self, activity, plan_context=""):
+        avg_hr = activity.get('average_heartrate')
+        max_hr = activity.get('max_heartrate')
+        _, avg_zone_label, easy_ok = self._hr_zone(avg_hr)
+
         hr_line = ""
-        if activity.get('average_heartrate') and activity.get('max_heartrate'):
-            hr_line = f"\nHR: avg {activity['average_heartrate']:.0f} / max {activity['max_heartrate']:.0f} bpm"
+        if avg_hr:
+            hr_line = f"\nHR: avg {avg_hr:.0f} ({avg_zone_label})"
+            if max_hr:
+                hr_line += f" / max {max_hr:.0f}"
+            if not easy_ok:
+                hr_line += f" — ABOVE Z2 (target: 119-139bpm for easy runs)"
+
+        # Include per-km splits if available (compact format)
+        splits_line = ""
+        if activity.get('splits_json'):
+            try:
+                splits = json.loads(activity['splits_json'])
+                split_paces = [
+                    f"km{s.get('split',i+1)}:{s['moving_time']/60:.1f}min"
+                    for i, s in enumerate(splits[:8])
+                    if s.get('moving_time') and s.get('distance', 0) > 500
+                ]
+                if split_paces:
+                    splits_line = f"\nSplits: {' | '.join(split_paces)}"
+            except Exception:
+                pass
 
         prompt = f"""Analyze this completed run and provide coaching feedback:
 
 Distance: {activity['distance_metres']/1000:.1f}km | Pace: {activity['average_pace_per_km']:.2f}/km
-Time: {activity['moving_time_seconds']/60:.0f}min | Date: {(activity.get('start_date_local') or activity['start_date'])[:10]}{hr_line}
+Time: {activity['moving_time_seconds']/60:.0f}min | Date: {(activity.get('start_date_local') or activity['start_date'])[:10]}{hr_line}{splits_line}
 Elevation: {activity['total_elevation_gain']:.0f}m{f" | {activity['kilojoules']:.0f}kJ" if activity.get('kilojoules') else ""}{plan_context}
 
-Keep feedback conversational and under 120 words. If plan context is provided, explicitly say whether they hit the target. Flag if easy run HR was too high."""
+Keep feedback conversational and under 150 words. Explicitly state the HR zone and whether it was appropriate. If splits show pace drift, call it out. If plan context is provided, say whether targets were hit."""
 
         response = self.client.messages.create(
             model=CLAUDE_MODEL_CHAT,
